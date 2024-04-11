@@ -1,3 +1,3 @@
 # MASTER
 
-Main repository for all assignments
+Master repository for all assignments
