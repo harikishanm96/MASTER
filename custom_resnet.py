@@ -1,5 +1,9 @@
 import torch.nn.functional as F
 import torch.nn as nn
+from pytorch_lightning import LightningModule
+from torch.optim.lr_scheduler import OneCycleLR
+from torchmetrics.functional import accuracy
+import torch
 
 dropout_value = 0.1
 
@@ -88,4 +92,60 @@ class Net(nn.Module):
         out = out.view(out.size(0),-1)
         out = self.fc(out)
 
-        return F.log_softmax(out, dim=-1)
+        # return F.log_softmax(out, dim=-1)
+        return out.view(-1, 10)
+
+class LitCustomResnet(LightningModule):
+    def __init__(self, lr = 0.05,batch_size=64):
+        super().__init__()
+        self.model = Net()
+        self.save_hyperparameters()
+        self.BATCH_SIZE=batch_size
+
+    def forward(self,x):
+        return self.model(x)
+    
+    def training_step(self,batch,batch_id):
+        x,y = batch
+        logits = self(x)
+        loss = F.cross_entropy(logits,y)
+        self.log("training loss", loss)
+        return loss
+    
+    def evaluate(self, batch, stage=None):
+        x,y = batch
+        logits = self(x)
+        loss = F.cross_entropy(logits, y)
+        preds = torch.argmax(logits, dim=1)
+
+        # print(preds.shape,y.shape)
+        acc= accuracy(preds,y, task = "multiclass", num_classes=10)
+
+        if stage:
+            self.log(f"{stage}_loss", loss, prog_bar=True)
+            self.log(f"{stage}_acc", acc, prog_bar=True)
+
+    def validation_step(self, batch, batch_idx):
+        self.evaluate(batch, "val")
+
+    def test_step(self, batch, batch_idx):
+        self.evaluate(batch, "test")
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(
+            self.parameters(),
+            lr=self.hparams.lr,
+            # momentum=0.9,
+            # weight_decay=5e-4,
+        )
+        steps_per_epoch = 45000 // self.BATCH_SIZE
+        scheduler_dict = {
+            "scheduler": OneCycleLR(
+                optimizer,
+                0.003,
+                epochs=self.trainer.max_epochs,
+                steps_per_epoch=steps_per_epoch,
+            ),
+            "interval": "step",
+        }
+        return {"optimizer": optimizer, "lr_scheduler": scheduler_dict}
